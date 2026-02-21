@@ -1,0 +1,70 @@
+name: Build and deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main    # change if your default branch is 'master' or another name
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'    # change if you need another LTS
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Remove empty public/CNAME (if present)
+        run: |
+          if [ -f public/CNAME ] && [ ! -s public/CNAME ]; then
+            echo "Removing empty public/CNAME to avoid deploying blank CNAME"
+            rm public/CNAME
+          fi
+
+      - name: Build
+        # pass secrets to Vite build so they're available to vite.config.js
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_API_KEY: ${{ secrets.VITE_API_KEY }}
+          CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          # derive repo name from owner/repo (e.g. "owner/repo" -> "repo")
+          export REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          echo "Building with REPO_NAME=$REPO_NAME CUSTOM_DOMAIN=$CUSTOM_DOMAIN"
+          # ensure environment variable is available to the Node build
+          export REPO_NAME
+          npm run build
+
+      - name: Create CNAME if CUSTOM_DOMAIN present
+        if: ${{ secrets.CUSTOM_DOMAIN != '' && secrets.CUSTOM_DOMAIN != null }}
+        run: |
+          echo "Adding CNAME file for custom domain: $CUSTOM_DOMAIN"
+          echo "$CUSTOM_DOMAIN" > ./dist/CNAME
+        env:
+          CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN }}
+
+      - name: Deploy to gh-pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
